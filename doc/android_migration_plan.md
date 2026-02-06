@@ -89,10 +89,14 @@ dispatchGesture(gestureDescription, callback, null)
 
 ### 5.1 输入构造（UI Tree + Screenshot）
 
-将 UI 节点树进行结构化压缩，降低 token 消耗：
+将 UI 节点树进行结构化压缩，降低 token 消耗（**仅编码可见节点**）：
 - 仅保留 `id/text/desc/bounds`
 - 合并重复项
 - 过滤无效节点（不可见、无文本、无描述）
+
+同时对截图做 **等比例缩放**，并在需要时进行 **灰度处理**，以减少带宽与 token 占用：
+- 保持长宽比缩放（例如最长边 1024px）
+- 低价值细节可选择灰度化后再编码发送
 
 发送给 GPT-4o 的 payload 结构建议：
 
@@ -136,11 +140,23 @@ LLM 返回的动作应结构化：
 ### 6.2 伪代码
 
 ```kotlin
+var noChangeCount = 0
 while (!goalReached && loopCount < MAX_LOOP) {
-  state = observer.capture()
-  decision = planner.think(state)
+  val before = observer.capture()
+  val decision = planner.think(before)
   executor.perform(decision)
-  verifier.check(state, observer.capture())
+  val after = observer.capture()
+  val changed = verifier.check(before, after)
+  if (!changed) {
+    noChangeCount += 1
+    if (noChangeCount >= 3) {
+      executor.performBack()
+      noChangeCount = 0
+      continue
+    }
+  } else {
+    noChangeCount = 0
+  }
 }
 ```
 
