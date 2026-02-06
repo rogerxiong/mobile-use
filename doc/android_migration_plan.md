@@ -39,14 +39,20 @@
 ### 3.1 UI 节点树获取
 
 使用 `AccessibilityService#getRootInActiveWindow()` 获取当前窗口的根节点，并遍历生成轻量结构。  
-**只保留关键字段**（便于发送给 LLM）：
+**请勿直接上传完整 XML**，应通过 **UIFlatteners** 将 `AccessibilityNodeInfo` 树扁平化为简化 JSON/Markdown 列表，减少 token 成本：
+
+- 仅保留四个维度：`isClickable` / `contentDescription` / `text` / `boundsInScreen`
+- 过滤不可见节点，合并重复节点
+- 保持结构扁平化，便于 LLM 快速理解
+
+示例（JSON）：
 
 ```json
 {
-  "id": "com.app:id/title",
+  "isClickable": true,
+  "contentDescription": "Search button",
   "text": "搜索",
-  "desc": "Search button",
-  "bounds": "[90,120][240,180]"
+  "boundsInScreen": "[90,120][240,180]"
 }
 ```
 
@@ -173,6 +179,36 @@ while (!goalReached && loopCount < MAX_LOOP) {
 - 无障碍服务需要在系统设置手动开启。
 - 截图权限需要前台通知与用户授权。
 
+### 7.1 GlobalActionService 与配置文件
+
+项目必须包含 `GlobalActionService`（继承 `AccessibilityService`），作为全局执行代理并监听窗口变化。  
+同时需要提供 `AndroidManifest.xml` 与 `accessibility_service_config.xml` 配置，确保具备窗口事件与全屏信息能力。
+
+**AndroidManifest.xml 示例片段：**
+```xml
+<service
+    android:name=".service.GlobalActionService"
+    android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+    </intent-filter>
+    <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/accessibility_service_config" />
+</service>
+```
+
+**accessibility_service_config.xml 示例片段：**
+```xml
+<accessibility-service
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="true"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:notificationTimeout="100" />
+```
+
 ---
 
 ## 8) 组件设计建议
@@ -184,13 +220,20 @@ App/
  │   ├─ ScreenshotProvider
  │   └─ ActionExecutor
  ├─ AgentLoopManager
- │   ├─ TaskPlanner
- │   ├─ DecisionEngine (LLM)
- │   └─ Verifier
+ │   ├─ Planner
+ │   ├─ ActionAgent
+ │   └─ Validator
  └─ Data
      ├─ UiNodeModel
      └─ ActionModel
 ```
+
+### 8.1 Kotlin 版状态机映射（参照 mobile-use/agents）
+
+参考 `mobile-use` 中 `agents/` 的职责划分，在 Kotlin 侧实现类似的状态机：
+- **Planner**：将用户目标拆解为子任务（子目标列表）
+- **Action Agent**：基于当前 UI 状态决定下一步动作（Click/Scroll/Type）
+- **Validator**：执行后再次抓取 UI 与截图，判断是否达成目标或进入下一轮
 
 ---
 
